@@ -11,6 +11,8 @@ library(geodata)
 library(ggnewscale)
 library(patchwork)
 library(maps)
+library(data.table)
+
 
 # get group numbers for each ESA clustering
 ESA_groups <-  read.table("F:/ESA/ESApargrps.txt", sep = "")
@@ -351,8 +353,12 @@ ggplot(partition_long, aes(x = Metric, y = Partitions, fill = factor(Group))) +
 #########################################################
 ### ESA TIME SERIES ###
 #########################################################
-esa_data <- read.csv("F:/ESA/esa_manuscript.csv")
+# get time series output file from ESA calculation 
+# 88 values for each basin (747 basins)
+# modified slightly in excel (qep_output_march.csv)
+esa_data <- read.csv("F:/ESA_R/esa_manuscript.csv")
 
+# add date column and time index 
 esa_data <-  esa_data %>% 
   mutate(SITENO = str_extract(SITENO, "\\d{8}")) %>% 
   rename(PRCP = P, PET = Ep, AET = E) %>% 
@@ -368,26 +374,19 @@ esa_data <- esa_data %>% rename(ESA = ESA.x, ESA_group = ESA.y)
 # limit to 1 (overestimation of E, greater than P)
 esa_data$ESA <- ifelse(esa_data$ESA > 1.0, 1.0, esa_data$ESA)
 
-
-
-mean_ESA <- esa_data %>% group_by(Partitions, Time_Index) %>% summarise(mean = mean(ESA))
-
-ggplot(data = mean_ESA, aes(x = Time_Index, y = mean)) + geom_line() +
-  ylim(-1, 1.1) 
-
-
+esa_data <- setDT(esa_data)
 
 all_plots = list() # remove if saving individual cluster plots
 
 # loop through clusters to create plots 
 for (cl in 1:10) {
   # subset data for cluster
-  cluster_data = df[Cluster == cl]
-  cluster_data[, Date := as.Date("1980-01-01") + (Year_Index - 1) * 183]
+  cluster_data = esa_data[Partitions == cl]
+  cluster_data[, Date := as.Date("1980-01-01") + (Time_Index - 1) * 183]
 
-  # get mean ESA value for each time period
-  cluster_mean = cluster_data[, .(Mean_ESA = mean(ESA, na.rm = TRUE)), by = Year_Index]
-  cluster_mean[, Date := as.Date("1980-01-01") + (Year_Index - 1) * 183]
+  # get median ESA value for each time period
+  cluster_mean = cluster_data[, .(Med_ESA = median(ESA, na.rm = TRUE)), by = Time_Index]
+  cluster_mean[, Date := as.Date("1980-01-01") + (Time_Index - 1) * 183]
   
   # Plot A: All basins' ESA time series
 plot_a = ggplot(cluster_data, aes(x = Date, y = ESA, group = SITENO)) +
@@ -397,19 +396,19 @@ plot_a = ggplot(cluster_data, aes(x = Date, y = ESA, group = SITENO)) +
   scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
     labels = scales::date_format("%Y"),
     limits = as.Date(c("1980-01-01", "2025-01-01"))) +
-  labs(title = paste("Cluster", cl, ": ESA Time Series"), y = "ESA", x = NULL) + theme_minimal() + 
+  labs(title = paste("Partition", cl, ": ESA Time Series"), y = "ESA", x = NULL) + theme_minimal() + 
   theme(legend.position = "none", title = element_text(size = 8), axis.title = element_text(size = 6), 
         axis.text = element_text(size = 6), axis.text.x = element_text(angle = 45))
   
-  # Plot B: Mean ESA time series
-  plot_b = ggplot(cluster_mean, aes(x = Date, y = Mean_ESA)) +
+  # Plot B: Median ESA time series
+  plot_b = ggplot(cluster_mean, aes(x = Date, y = Med_ESA)) +
     geom_line(color = "blue", linewidth = 0.75) + ylim(-1, 1.25) + 
     geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
       scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
     labels = scales::date_format("%Y"),
     limits = as.Date(c("1980-01-01", "2025-01-01"))) + theme_minimal() + 
    # labs(title = paste("Cluster", cl, ": Mean ESA Time Series"), y = "Mean ESA", x = NULL) +
-    labs(title = NULL, y = "Mean ESA", x = NULL) + 
+    labs(title = NULL, y = "ESA", x = NULL) + 
   theme(legend.position = "none", axis.title = element_text(size = 6), 
         axis.text = element_text(size = 6), axis.text.x = element_text(angle = 45))
   
@@ -433,71 +432,20 @@ ggsave(filename = "F:/Maps/final_clusters.png",
 
 
 ######################################################
-### DERIVATIVE ANALYSIS ###
+### DERIVATIVE PLOTS ###
 ######################################################
-# three-point first derivative function (translated from MATLAB)
-# use forward/backward differences on ends 
-# Abramowitz, M. and I. A. Stegun, (1972), Handbook of Mathematical
-# Functions, abridged 9th printing, Dover, New York.
-
-deriv13 <- function(f, dx) {
-  n <- length(f)
-  dfdx <- numeric(n)
-  
-  # Forward difference at start
-  dfdx[1] <- (-3 * f[1] + 4 * f[2] - f[3])
-  
-  # Centered difference for interior points
-  for (i in 2:(n-1)) {
-    dfdx[i] <- (-f[i-1] + f[i+1])
-  }
-  
-  # Backward difference at end
-  dfdx[n] <- (f[n-2] - 4 * f[n-1] + 3 * f[n])
-  
-  # Scale by 2*dx
-  dfdx <- dfdx / (2 * dx)
-  
-  return(dfdx)
-}
-
-mean_esa_cluster = esa_data %>%
-  group_by(Partitions, Time_Index) %>%
-  summarise(Mean_ESA = mean(ESA, na.rm = TRUE), .groups = "drop")
-
-# Compute derivatives using mean ESA
-deriv_switch_data <- mean_esa_cluster %>%
-  group_by(Partitions) %>%
-  arrange(Time_Index) %>%
-  mutate(
-    dESAda = deriv13(Mean_ESA, dx = 0.5)) #,  # dx = 1 for unit spacing (1 to 88), 0.5 for half year
-   # Switch = as.integer((Mean_ESA > 0 & lag(Mean_ESA) < 0) | (Mean_ESA < 0 & lag(Mean_ESA) > 0)),
-   # Switch = replace_na(Switch, 0)
-  
-
-
-# deriv_switch_data <- deriv_switch_data %>%
-#  mutate(Date = as.Date("1980-01-01") + (Time_Index - 1) * 183)
-
-# second_deriv = deriv_switch_data %>% 
-#  group_by(Cluster) %>% 
-#  arrange(Time_Index) %>% 
-#  mutate(
-#    secESA = deriv13(dESAda, dx = 0.5))
-  
-
-# Create 10-panel plot with Mean_ESA and dESAda
+# create 10-panel plot with Mean_ESA and dESAda
 plot <- ggplot(deriv_switch_data, aes(x = Date)) +
-  geom_line(aes(y = Mean_ESA, color = "Mean ESA"), linetype = "dashed") +
+  geom_line(aes(y = Med_ESA, color = "Median ESA"), linetype = "dashed") +
   geom_line(aes(y = dESAda, color = "dESAda")) +  # Scale dESAda for visibility
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
   scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2023-07-01"), by = "5 years"),
                labels = scales::date_format("%Y"),
                limits = as.Date(c("1980-01-01", "2023-07-01"))) +
   scale_y_continuous(name = "ESA") +
-  scale_color_manual(values = c("Mean ESA" = "blue", "dESAda" = "black")) +
+  scale_color_manual(values = c("Median ESA" = "blue", "dESAda" = "black")) +
   facet_wrap(~ Cluster, ncol = 3, nrow = 4) +
-  labs(title = "Mean ESA and Derivative ESA Time Series by Cluster (1980–2023)",
+  labs(title = "Median ESA and Derivative ESA Time Series by Partition (1980–2023)",
        x = "Year", color = "Series") +
   theme_minimal() +
   theme(legend.position = "bottom",
@@ -506,14 +454,68 @@ plot <- ggplot(deriv_switch_data, aes(x = Date)) +
         strip.text = element_text(size = 6),
         axis.text.x = element_text(angle = 45, hjust = 1))
 
-trend_results = mean_esa_cluster %>%
-  group_by(Cluster) %>%
-  do({
-    mod <- lm(Mean_ESA ~ Time_Index, data = .)
-    tidy(mod) %>%
-      filter(term == "Time_Index") %>%
-      mutate(Cluster = unique(.$Cluster))
-  }) %>%
-  ungroup() %>%
-  select(Cluster, estimate, std.error, statistic, p.value) %>%
-  rename(Slope = estimate, SE = std.error, t_stat = statistic)
+######################################################
+# similar groups 
+partition_1 <- esa_data %>% filter(Partitions == 1)
+partition_2 <- esa_data %>% filter(Partitions == 2)
+partition_3 <- esa_data %>% filter(Partitions == 3)
+partition_4 <- esa_data %>% filter(Partitions == 4)
+partition_5 <- esa_data %>% filter(Partitions == 5)
+partition_6 <- esa_data %>% filter(Partitions == 6)
+partition_7 <- esa_data %>% filter(Partitions == 7)
+partition_8 <- esa_data %>% filter(Partitions == 8)
+partition_9 <- esa_data %>% filter(Partitions == 9)
+partition_10 <- esa_data %>% filter(Partitions == 10)
+
+median_ESA <- esa_data %>% group_by(Partitions, DATE) %>% summarise(median = median(ESA))
+median_1 <- median_ESA %>% filter(Partitions == 1)
+median_2 <- median_ESA %>% filter(Partitions == 2)
+median_3 <- median_ESA %>% filter(Partitions == 3)
+median_4 <- median_ESA %>% filter(Partitions == 4)
+median_5 <- median_ESA %>% filter(Partitions == 5)
+median_6 <- median_ESA %>% filter(Partitions == 6)
+median_7 <- median_ESA %>% filter(Partitions == 7)
+median_8 <- median_ESA %>% filter(Partitions == 8)
+median_9 <- median_ESA %>% filter(Partitions == 9)
+median_10 <- median_ESA %>% filter(Partitions == 10)
+
+plot_9 <-  ggplot() +
+  geom_line(data = partition_9, aes(x = DATE, y = ESA, group = SITENO), 
+            color = "darkgray", alpha = 0.25, linewidth = 0.3) +
+  geom_line(data = median_9, aes(x = DATE, y = median), color = "blue", linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.8, color = "red") +
+  scale_y_continuous(limits = c(-1, 1), expand = c(0,0)) + 
+  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
+    labels = scales::date_format("%Y"),
+    limits = as.Date(c("1980-01-01", "2025-01-01"))) + 
+  labs(title = "Partition 9 (9/3/2/4)", y = "ESA", x = NULL) + theme_classic() + 
+  theme(legend.position = "none", axis.title = element_text(size = 10), 
+        plot.title = element_text(size = 12, hjust = 0.5), axis.text = element_text(size = 10)) 
+
+
+plot_10 <- ggplot() + 
+  geom_line(data = partition_10, aes(x = DATE, y = ESA, group = SITENO), 
+            color = "darkgray", alpha = 0.25, linewidth = 0.3) +
+  geom_line(data = median_10, aes(x = DATE, y = median), color = "blue", linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.8, color = "red") +
+  scale_y_continuous(limits = c(-1, 1), expand = c(0,0)) + 
+  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
+    labels = scales::date_format("%Y"),
+    limits = as.Date(c("1980-01-01", "2025-01-01"))) + 
+  labs(title = "Partition 10 (10/4/1/3)", y = "ESA", x = NULL) + theme_classic() + 
+  theme(legend.position = "none", axis.title = element_text(size = 10), 
+        plot.title = element_text(size = 12, hjust = 0.5), axis.text = element_text(size = 10))#+
+ # theme(panel.border = element_rect(color = "black", fill = NA, linewidth = 2))
+
+tgroup_1 <- plot_1 / plot_10
+
+egroup_1 <- plot_2 / plot_3 / plot_4 / plot_5
+
+egroup_2 <- plot_6 / plot_7
+
+egroup_3 <- plot_8 / plot_9
+
+ggplot(data = median_ESA, aes(x = Time_Index, y = median)) + geom_line() +
+  ylim(-1, 1.1) + geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  theme_minimal() + facet_wrap(~Partitions)
+

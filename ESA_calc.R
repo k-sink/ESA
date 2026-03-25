@@ -319,3 +319,85 @@ runQEPanal = function(fc, dir_path, output_file = "qep_output_march.csv") {
 # will save in directory path listed above 
     
 runQEPanal(fc = 0.5, dir_path)
+  
+######################################################
+### DERIVATIVE ANALYSIS ###
+######################################################
+# three-point first derivative function (translated from MATLAB)
+# use forward/backward differences on ends 
+# Abramowitz, M. and I. A. Stegun, (1972), Handbook of Mathematical
+# Functions, abridged 9th printing, Dover, New York.
+
+deriv13 <- function(f, dx) {
+  n <- length(f)
+  dfdx <- numeric(n)
+  
+  # Forward difference at start
+  dfdx[1] <- (-3 * f[1] + 4 * f[2] - f[3])
+  
+  # Centered difference for interior points
+  for (i in 2:(n-1)) {
+    dfdx[i] <- (-f[i-1] + f[i+1])
+  }
+  
+  # Backward difference at end
+  dfdx[n] <- (f[n-2] - 4 * f[n-1] + 3 * f[n])
+  
+  # Scale by 2*dx
+  dfdx <- dfdx / (2 * dx)
+  
+  return(dfdx)
+}
+
+median_esa_cluster = esa_data %>%
+  group_by(Partitions, Time_Index) %>%
+  summarise(Med_ESA = median(ESA, na.rm = TRUE), .groups = "drop")
+
+# Compute derivatives using mean ESA
+deriv_switch_data <- median_esa_cluster %>%
+  group_by(Partitions) %>%
+  arrange(Time_Index) %>%
+  mutate(
+    dESAda = deriv13(Med_ESA, dx = 0.5)) #,  # dx = 1 for unit spacing (1 to 88), 0.5 for half year
+   # Switch = as.integer((Mean_ESA > 0 & lag(Mean_ESA) < 0) | (Mean_ESA < 0 & lag(Mean_ESA) > 0)),
+   # Switch = replace_na(Switch, 0)
+  
+# deriv_switch_data <- deriv_switch_data %>%
+#  mutate(Date = as.Date("1980-01-01") + (Time_Index - 1) * 183)
+
+# second_deriv = deriv_switch_data %>% 
+#  group_by(Cluster) %>% 
+#  arrange(Time_Index) %>% 
+#  mutate(
+#    secESA = deriv13(dESAda, dx = 0.5))
+    
+######################################################
+### TREND ANALYSIS ###
+######################################################
+trend_results = median_esa_cluster %>%
+  group_by(Partitions) %>%
+  do({
+    mod <- lm(Med_ESA ~ Time_Index, data = .)
+    tidy(mod) %>%
+      filter(term == "Time_Index") %>%
+      mutate(Partitions = unique(.$Partitions))
+  }) %>%
+  ungroup() %>%
+  select(Partitions, estimate, std.error, statistic, p.value) %>%
+  rename(Slope = estimate, SE = std.error, t_stat = statistic)
+
+trend_results <- median_ESA %>% 
+  group_by(Partitions) %>% 
+  do(model = lm(median ~ Time_Index, data = .))
+
+coeff_summary <- trend_results %>% 
+  summarise(intercept = coef(model)[1], slope = coef(model)[2])
+
+
+trend_data <- climate_indices %>%
+  group_by(Cluster, Index) %>%
+  do(tidy(lm(Value ~ YR, data = .))) %>%
+  filter(term == "YR") %>%  # only keep the slope (not the intercept)
+ mutate(significant = ifelse(p.value < 0.05, "*", "")) %>%
+  ungroup() %>%
+  select(Cluster, Index, slope = estimate, p_value = p.value, significant)
