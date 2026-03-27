@@ -333,14 +333,17 @@ partition_summary <- ESA_groups %>%
              dESA = mean(dESA))
 
 partition_long <- partition_summary %>% 
-  pivot_longer(cols = c("ESA", "dESA", "Slope"), names_to = "Metric", values_to = "Group")
+  pivot_longer(cols = c("ESA", "dESA", "Slope"), 
+               names_to = "Metric", values_to = "Group") %>% 
+  mutate(Metric = factor(Metric, levels = c("ESA", "dESA", "Slope"))) # remove alpha ordering
 
 ggplot(partition_long, aes(x = Metric, y = Partitions, fill = factor(Group))) +
   geom_tile(color = NA) +   # removes white borders
   scale_fill_manual(values = c("#D55E00", "#F0E442", "#009E73", "#0072B2", "#CC79A7"),
     name = "Group") +
-  scale_y_continuous(breaks = 1:10, expand = c(0,0), name = "Partition") +
-  scale_x_discrete(labels = c("T", "E", "S")) +
+ # scale_y_continuous(breaks = 1:10, expand = c(0,0), name = "Partition") +
+  scale_y_reverse(breaks = 1:10, expand = c(0,0), name = "Partition") +
+  scale_x_discrete(labels = c("E", "T", "S")) +
   coord_fixed() +
   theme_minimal(base_size = 12) +
   theme(
@@ -430,30 +433,6 @@ final_clusters = wrap_plots(all_plots, ncol = 3, nrow = 4) +
 ggsave(filename = "F:/Maps/final_clusters.png", 
        plot = final_clusters, device = "png", width = 10, height = 16, dpi = 300)
 
-
-######################################################
-### DERIVATIVE PLOTS ###
-######################################################
-# create 10-panel plot with Mean_ESA and dESAda
-plot <- ggplot(deriv_switch_data, aes(x = Date)) +
-  geom_line(aes(y = Med_ESA, color = "Median ESA"), linetype = "dashed") +
-  geom_line(aes(y = dESAda, color = "dESAda")) +  # Scale dESAda for visibility
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2023-07-01"), by = "5 years"),
-               labels = scales::date_format("%Y"),
-               limits = as.Date(c("1980-01-01", "2023-07-01"))) +
-  scale_y_continuous(name = "ESA") +
-  scale_color_manual(values = c("Median ESA" = "blue", "dESAda" = "black")) +
-  facet_wrap(~ Cluster, ncol = 3, nrow = 4) +
-  labs(title = "Median ESA and Derivative ESA Time Series by Partition (1980–2023)",
-       x = "Year", color = "Series") +
-  theme_minimal() +
-  theme(legend.position = "bottom",
-        axis.text = element_text(size = 6),
-        axis.title = element_text(size = 6),
-        strip.text = element_text(size = 6),
-        axis.text.x = element_text(angle = 45, hjust = 1))
-
 ######################################################
 # similar groups 
 partition_1 <- esa_data %>% filter(Partitions == 1)
@@ -519,3 +498,26 @@ ggplot(data = median_ESA, aes(x = Time_Index, y = median)) + geom_line() +
   ylim(-1, 1.1) + geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
   theme_minimal() + facet_wrap(~Partitions)
 
+
+######################################################
+### DERIVATIVE PLOTS ###
+######################################################
+# create 10-panel plot with Mean_ESA and dESAda
+plot <- ggplot(deriv_switch_data, aes(x = Date)) +
+  geom_line(aes(y = Med_ESA, color = "Median ESA"), linetype = "dashed") +
+  geom_line(aes(y = dESAda, color = "dESAda")) +  # Scale dESAda for visibility
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2023-07-01"), by = "5 years"),
+               labels = scales::date_format("%Y"),
+               limits = as.Date(c("1980-01-01", "2023-07-01"))) +
+  scale_y_continuous(name = "ESA") +
+  scale_color_manual(values = c("Median ESA" = "blue", "dESAda" = "black")) +
+  facet_wrap(~ Cluster, ncol = 3, nrow = 4) +
+  labs(title = "Median ESA and Derivative ESA Time Series by Partition (1980–2023)",
+       x = "Year", color = "Series") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.text = element_text(size = 6),
+        axis.title = element_text(size = 6),
+        strip.text = element_text(size = 6),
+        axis.text.x = element_text(angle = 45, hjust = 1))
