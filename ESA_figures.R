@@ -13,7 +13,71 @@ library(patchwork)
 library(maps)
 library(data.table)
 
+#################################
+# Hodograph
+#################################
+basin <- read_csv("D:/Journal submissions/Scientific Data/MACH_dataset/MACH_ts/ALLVAR/basin_07340300_MACH.csv")
+indices <- basin %>% select(DATE, AET, PET, PRCP)
+indices <- indices %>% mutate(MNTH = month(DATE), YR = year(DATE))
+semi_annual <- indices %>% mutate(period = ifelse(MNTH <=6, 1, 2)) %>% 
+  group_by(YR, period) %>% 
+  summarise(PET = sum(PET, na.rm = TRUE), 
+            AET = sum(AET, na.rm = TRUE), 
+            PRCP = sum(PRCP, na.rm = TRUE))
+semi_annual <- semi_annual %>% mutate(EpP = PET/PRCP, EP = AET/PRCP)
 
+annual <- indices %>% group_by(YR) %>% 
+  summarise(PRCP = sum(PRCP, na.rm = TRUE), 
+            AET = sum(AET, na.rm = TRUE), 
+            PET = sum(PET, na.rm = TRUE), 
+            EpP = PET/PRCP, EP = AET/PRCP, 
+            .groups = "drop") %>% 
+  arrange(YR) %>% mutate(decade = paste0(floor(YR / 10) * 10, "s"))
+
+ggplot(data = annual, aes(x = EpP, y = EP)) + 
+  geom_line(aes(color = decade), linewidth = 1) +
+  geom_point(aes(color = decade), size = 2) + theme_bw()
+
+
+ggplot(annual, aes(x = EpP, y = EP)) + 
+  geom_path(aes(group = 1), linewidth = 1.2, color = "grey70") +
+  geom_point(aes(color = decade), size = 3) + theme_bw()
+
+ggplot(data = annual, aes(x = EpP, y = EP)) + 
+  geom_path(aes(color = YR, group = 1), linewidth = 1.2) +
+  geom_point(aes(color = YR), size = 2) +
+  scale_color_viridis_c(option = "mako") + 
+  coord_cartesian(xlim = c(0, 2), ylim = c(0, 1)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+  geom_hline(yintercept = 0) + geom_vline(xintercept = 0)
+
+budyko_function = function(PET_P) {
+  ifelse(PET_P == 0,0, 
+         (PET_P * tanh(1/PET_P) * (1 - exp(-PET_P)))^0.5)
+}
+
+ggplot(data = annual, aes(x = EpP, y = EP)) + 
+  stat_function(fun = budyko_function, color = "red", linewidth = 1, linetype = 1) +
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), color = "red", linetype = 2, linewidth = 1) +
+  geom_segment(aes(x = 1, y = 1, xend = 2, yend = 1), color = "red", linetype = 2, linewidth = 1) +
+  coord_cartesian(xlim = c(0,2)) + 
+  geom_vline(xintercept = 0, linetype = 2, linewidth = 1) + 
+  geom_hline(yintercept = 0, linetype = 5, linewidth = 1) + 
+  geom_segment(aes(x = 1, y = 1, xend = 1.4142, yend = 0), color = "blue", linetype = 5, linewidth = 0.8) +
+  geom_path(aes(color = YR, group = 1), linewidth = 1.2) +
+  geom_point(aes(color = YR), size = 2) +
+  scale_color_viridis_c(option = "mako") + 
+  coord_fixed(ratio = 1, xlim = c(0, 2), ylim = c(0, 1)) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2)) +
+  theme_classic() +
+  labs(x = "Ep/P", y = "E/P", color = "Year", title = "07340300 (34.38, -94.24)") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+
+#################################
+# LOCATION MAP
+#################################
 # get group numbers for each ESA clustering
 ESA_groups <-  read.table("F:/ESA/ESApargrps.txt", sep = "")
 ESA_groups <-  ESA_groups %>% rename(SITENO = V1, Partitions = V2, Slope = V3, ESA = V4, dESA = V5)
@@ -25,10 +89,10 @@ site_info <-  read_csv("F:/ESA/site_info.csv") %>%
 
 ESA_groups <- ESA_groups %>% left_join(site_info, by = "SITENO")
 
-site_locations <- ESA_groups %>% dplyr::select(SITENO, dec_lat_va, dec_long_va)
+# site_locations <- ESA_groups %>% dplyr::select(SITENO, dec_lat_va, dec_long_va)
 
 # sites as sf 
-sites_sf <- st_as_sf(site_locations, coords = c("dec_long_va", "dec_lat_va"), crs = 4326)
+sites_sf <- st_as_sf(ESA_groups, coords = c("dec_long_va", "dec_lat_va"), crs = 4326)
 
 # define extents 
 # lon_min <- -105; lon_max <- -67
@@ -37,6 +101,29 @@ lon_min <- -105; lon_max <- -50
 lat_min <- 20; lat_max <- 60
 bbox_polygon <- st_as_sfc(st_bbox(c(xmin = lon_min, xmax = lon_max, 
                           ymin = lat_min, ymax = lat_max), crs = 4326))
+
+# get polygons/vector data for states and rivers, crop 
+sf::sf_use_s2(FALSE)
+
+states_crop <- ne_states(country = "United States of America", returnclass = "sf") %>% 
+  filter(!name %in% c("Alaska", "Hawaii", "Puerto Rico")) %>% st_crop(bbox_polygon)
+
+# reproject to remove space
+crs_albers <- 5070
+states_proj <- st_transform(states_crop, crs_albers)
+sites_proj  <- st_transform(sites_sf, crs_albers)
+
+coord_limits <- coord_sf(expand = FALSE)
+location_map <- ggplot() +
+  geom_sf(data = states_proj, fill = NA, color = "black", linewidth = 0.4) +
+  geom_sf(data = sites_proj, shape = 16, color = "black",
+          size = 1.5, stroke = 0.4, alpha = 0.9) +
+    labs(title = "Watershed Locations") +
+  coord_limits +
+    theme(axis.title = element_blank(),
+    panel.grid.major = element_line(color = "blue", linewidth = 0.3),
+    panel.grid.minor = element_line(color = "blue", linewidth = 0.2)) +
+  theme_bw()
 
 ###########################################################
 # LOCATION and ELEVATION MAP #
@@ -125,13 +212,9 @@ ggsave("F:/ESA/location_map.png", plot = location_map, dpi = 320, width = 6, hei
 # ESA clusters #
 ###########################################################
 # sites as sf 
-ESA_groups <- ESA_groups %>% dplyr::select(SITENO, Partitions, ESA, dESA, Slope, dec_lat_va, dec_long_va)
-
-sites_sf <- st_as_sf(ESA_groups, coords = c("dec_long_va", "dec_lat_va"), crs = 4326)
-
-sites_sf$Partitions <- factor(sites_sf$Partitions)
-cluster_colors <- c("#D55E00", "#E69F00", "#CC79A7", "#F0E442", "#009E73", 
-                    "#56B4E9", "#0072B2", "#7F7F7F", "#999999",  "#000000")
+sites_sf$Partitions <- factor(sites_sf$Partitions, levels = 1:10)
+cluster_colors <- c("#000000", "#999999", "#F0E442", "#56B4E9", "#009E73", 
+                    "#CC79A7", "#0072B2", "#7F7F7F", "#D55E00", "#E69F00" )
 
 cluster_shapes <- c(21, 22, 23, 24, 25, 21, 22, 23, 24, 25)
 
@@ -143,9 +226,9 @@ partition <- ggplot() + geom_sf(data = states_crop, fill = NA, color = "black", 
       scale_shape_manual(values = cluster_shapes, name = "Partition") +
   scale_x_continuous(breaks = seq(-100,-70, 10)) +
   scale_y_continuous(breaks = seq(25,50,5)) +
-  coord_sf(xlim = c(lon_min, lon_max),
-           ylim = c(lat_min, lat_max),
-           expand = FALSE, datum = st_crs(4326)) +
+#  coord_sf(xlim = c(lon_min, lon_max),
+#           ylim = c(lat_min, lat_max),
+#           expand = FALSE, datum = st_crs(4326)) +
   theme_minimal() +
   theme(axis.title = element_blank(),  
    panel.grid.major = element_blank(), 
@@ -170,7 +253,7 @@ distribution <- ggplot() + geom_sf(data = states_crop, fill = NA, color = "black
     coord_sf(xlim = c(lon_min, lon_max),
            ylim = c(lat_min, lat_max),
            expand = FALSE, datum = st_crs(4326)) +
-  labs(title = "ESA rstd (E)") + 
+  labs(title = expression(ESA[rstd])) + 
   theme_minimal() + theme(axis.title = element_blank(),  
                           legend.title = element_blank(), 
                           legend.position = "none", 
@@ -187,9 +270,9 @@ tail <- ggplot() + geom_sf(data = states_crop, fill = NA, color = "black", linew
   geom_sf(data = sites_sf, aes(fill = dESA), 
           shape = 21, color = "black", size = 1.5, stroke = 0.4, alpha = 0.9) +
       shared_colors + 
-  coord_fixed(xlim = c(lon_min, lon_max),
-           ylim = c(lat_min, lat_max), expand = FALSE) +
-   labs(title = "dESA/dt (T)") + 
+  coord_sf(xlim = c(lon_min, lon_max),
+           ylim = c(lat_min, lat_max), expand = FALSE, datum = st_crs(4326)) +
+   labs(title = expression(ESA[tails])) + 
   theme_minimal() + theme(axis.title = element_blank(),  
                            legend.title = element_blank(), 
                           legend.position = "none", 
@@ -224,26 +307,6 @@ slope <- ggplot() + geom_sf(data = states_crop, fill = NA, color = "black", line
 
 ###############################################
 # paneled figure for groupings
-
-# prevent partition legend from being collected
-partition_fixed <- partition + plot_layout(guides = "keep")
-
-# collect legends only in right column
-right <- (distribution / tail / slope) +
-  plot_layout(guides = "collect") +
-  plot_annotation(
-    theme = theme(legend.position = "right", legend.direction = "horizontal"))
-
-# combine
-final <- (partition_fixed | right) +
-  plot_layout(widths = c(2,1)) +
-  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")")
-
-ggsave("F:/ESA/ESA_groups.png", plot = final, dpi = 320, width = 12, height = 7, units = "in")
-
-
-####
-# panel for just major groupings
 # reproject to remove space
 crs_albers <- 5070
 states_proj <- st_transform(states_crop, crs_albers)
@@ -264,14 +327,14 @@ distribution_map <- ggplot() +
   geom_sf(data = states_proj, fill = NA, color = "black", linewidth = 0.4) +
   geom_sf(data = sites_proj, aes(fill = ESA), shape = 21, color = "black",
           size = 1.5, stroke = 0.4, alpha = 0.9) +
-  labs(title = "ESA rstd (E)") +
+    labs(title = expression(ESA[rstd])) +
   shared_colors + clean_theme + coord_limits
 
 tail_map <- ggplot() +
   geom_sf(data = states_proj, fill = NA, color = "black", linewidth = 0.4) +
   geom_sf(data = sites_proj, aes(fill = dESA), shape = 21, color = "black",
           size = 1.5, stroke = 0.4, alpha = 0.9) +
-   labs(title = "dESA/dt (T)") +
+     labs(title = expression(ESA[tails])) +
   shared_colors + clean_theme + coord_limits
 
 slope_map <- ggplot() +
@@ -281,9 +344,9 @@ slope_map <- ggplot() +
    labs(title = "Slope (S)") +
   shared_colors + clean_theme + coord_limits
 
-final_map <- distribution_map + tail_map + slope_map +
+final_map <- distribution_map + tail_map +
    plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ")") +
-   plot_layout(ncol = 3, guides = "collect") &
+   plot_layout(ncol = 2, guides = "collect") &
   theme(legend.position = "bottom",
     plot.margin = margin(0, 0, 0, 0),
     panel.spacing = unit(0, "pt"), 
@@ -328,28 +391,25 @@ ggplot() +
 #########################################################
 partition_summary <- ESA_groups %>% 
    group_by(Partitions) %>% 
-   summarise(Slope = mean(Slope), 
-             ESA = mean(ESA), 
-             dESA = mean(dESA))
+   summarise(ESA = mean(ESA), dESA = mean(dESA))
 
 partition_long <- partition_summary %>% 
-  pivot_longer(cols = c("ESA", "dESA", "Slope"), 
+  pivot_longer(cols = c("ESA", "dESA"), 
                names_to = "Metric", values_to = "Group") %>% 
-  mutate(Metric = factor(Metric, levels = c("ESA", "dESA", "Slope"))) # remove alpha ordering
+  mutate(Metric = factor(Metric, levels = c("ESA", "dESA"))) # remove alpha ordering
 
-ggplot(partition_long, aes(x = Metric, y = Partitions, fill = factor(Group))) +
+ggplot(partition_long, aes(x = Partitions, y = Metric, fill = factor(Group))) +
   geom_tile(color = NA) +   # removes white borders
-  scale_fill_manual(values = c("#D55E00", "#F0E442", "#009E73", "#0072B2", "#CC79A7"),
-    name = "Group") +
- # scale_y_continuous(breaks = 1:10, expand = c(0,0), name = "Partition") +
-  scale_y_reverse(breaks = 1:10, expand = c(0,0), name = "Partition") +
-  scale_x_discrete(labels = c("E", "T", "S")) +
+  scale_fill_manual(values = c("#D55E00", "#F0E442", "#009E73", "#0072B2", "#CC79A7"),name = "Group") +
+# scale_x_reverse(breaks = 1:10, expand = c(0,0), name = "Partition") +
+  scale_x_continuous(breaks = 1:10, expand = c(0,0), name = expression(ESA[partition])) +
+  scale_y_discrete(labels = c(expression(ESA[rstd]), expression(ESA[tails]))) +
   coord_fixed() +
   theme_minimal(base_size = 12) +
   theme(
     axis.text.x = element_text(size = 10), 
+    axis.title.y = element_blank(), 
     panel.grid = element_blank(),
-    axis.title.x = element_blank(),
     legend.position = "right")
   
 
@@ -359,24 +419,21 @@ ggplot(partition_long, aes(x = Metric, y = Partitions, fill = factor(Group))) +
 # get time series output file from ESA calculation 
 # 88 values for each basin (747 basins)
 # modified slightly in excel (qep_output_march.csv)
-esa_data <- read.csv("F:/ESA_R/esa_manuscript.csv")
+esa_data <- read_csv("F:/ESA_R/esa_manuscript.csv") 
+esa_data$DATE <- as.Date(esa_data$DATE, format = "%m/%d/%Y")        
 
-# add date column and time index 
-esa_data <-  esa_data %>% 
-  mutate(SITENO = str_extract(SITENO, "\\d{8}")) %>% 
-  rename(PRCP = P, PET = Ep, AET = E) %>% 
-  group_by(SITENO) %>% 
-  mutate(DATE = as.Date("1980-01-01") + (row_number() - 1) * 183, 
-         YR = year(DATE), 
+# rename columns
+esa_data <-  esa_data %>% rename(P = PRCP, Ep = PET, E = AET) 
+  
+ # mutate(DATE = as.Date("1980-01-01") + (row_number() - 1) * 183, 
+  #       YR = year(DATE), 
         # Period = floor((YR - 1980) / 5) + 1), 
-         Time_Index = row_number()) %>%  ungroup()
-
-esa_data <- left_join(esa_data, ESA_groups, by = "SITENO")
-esa_data <- esa_data %>% rename(ESA = ESA.x, ESA_group = ESA.y)
+   #      Time_Index = row_number()) %>%  ungroup()
 
 # limit to 1 (overestimation of E, greater than P)
 esa_data$ESA <- ifelse(esa_data$ESA > 1.0, 1.0, esa_data$ESA)
 
+# set at datatable type 
 esa_data <- setDT(esa_data)
 
 all_plots = list() # remove if saving individual cluster plots
@@ -434,6 +491,81 @@ ggsave(filename = "F:/Maps/final_clusters.png",
        plot = final_clusters, device = "png", width = 10, height = 16, dpi = 300)
 
 ######################################################
+# all partitions in grid plot
+
+# get unique basins per partition
+n_df <- esa_data %>% 
+  group_by(Partitions) %>% 
+  summarise(n = n_distinct(SITENO)) %>% 
+  arrange(Partitions)
+
+# get partition levels
+# partitions <- sort(unique(esa_data$Partitions))
+partitions <- n_df$Partitions
+
+# create labels (a), (b), etc
+facet_labels <- setNames(paste0("(", letters[seq_along(partitions)], ") Partition ", partitions, 
+                                " (n = ", n_df$n, ")"), partitions)
+
+p <- ggplot() + 
+  geom_line(data = esa_data, aes(x = DATE, y = ESA, group = SITENO), color = "darkgray", alpha = 0.25, linewidth = 0.3) +
+#  geom_line(data = median_ESA, aes(x = DATE, y = median), color = "blue", linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.8, color = "red") + 
+  scale_y_continuous(limits = c(-1, 1), expand = c(0,0)) + 
+  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
+    labels = scales::date_format("%Y"),
+    limits = as.Date(c("1980-01-01", "2025-01-01"))) + 
+  labs(y = "ESA", x = NULL) + 
+  facet_wrap(~Partitions, nrow = 5, labeller = labeller(Partitions = facet_labels)) +
+  theme_bw()+ 
+  theme(legend.position = "none", 
+        axis.title = element_text(size = 10), 
+       # plot.title = element_text(size = 12, hjust = 0.5), 
+        axis.text = element_text(size = 10), 
+       strip.background = element_blank(), 
+       strip.placement = "outside", 
+       strip.text = element_text(face = "bold", hjust = 0))
+
+# tag_facet <- function(p, open = "(", close = ")", tag_fun = function(i) letters[i]) {
+#  gb <- ggplot_build(p)
+#  lay <- gb$layout$layout
+  
+#  tags <- paste0(open, tag_fun(seq_len(nrow(lay))), close)
+  
+#  p + geom_text(data = lay, aes(x = -Inf, y = Inf, label = tags), 
+#                hjust = -0.3, vjust = 1.3, size = 3.5, inherit.aes = FALSE)
+#}
+
+# tag_facet(p)
+
+
+###################################################################
+sites_sf_1 <- sites_sf %>% filter(Partitions == 1)
+sites_sf_2 <- sites_sf %>% filter(Partitions == 2)
+sites_sf_3 <- sites_sf %>% filter(Partitions == 3)
+sites_sf_4 <- sites_sf %>% filter(Partitions == 4)
+sites_sf_5 <- sites_sf %>% filter(Partitions == 5)
+sites_sf_6 <- sites_sf %>% filter(Partitions == 6)
+sites_sf_7 <- sites_sf %>% filter(Partitions == 7)
+sites_sf_8 <- sites_sf %>% filter(Partitions == 8)
+sites_sf_9 <- sites_sf %>% filter(Partitions == 9)
+sites_sf_10 <- sites_sf %>% filter(Partitions == 10)
+
+
+sites_sf_2_3 <- sites_sf %>% filter(Partitions %in% c(2,3))
+
+# location plot for each partition to inset into time series plot
+map_partition_plot_1 <- ggplot() + geom_sf(data = states_crop, fill = NA, color = "black", linewidth = 0.4) +
+  geom_sf(data = sites_sf_1, aes(fill = Partitions, shape = Partitions), 
+          color = "black", size = 1.5, stroke = 0.4, alpha = 0.9) +
+          scale_fill_manual(values = setNames(cluster_colors, 1:10)) +
+          scale_shape_manual(values = setNames(cluster_shapes, 1:10)) +
+          theme_minimal() +
+          theme(axis.title = element_blank(),  
+          axis.text = element_blank(), axis.ticks = element_blank(), 
+          legend.position = "none", 
+          panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
 # similar groups 
 partition_1 <- esa_data %>% filter(Partitions == 1)
 partition_2 <- esa_data %>% filter(Partitions == 2)
@@ -467,38 +599,91 @@ plot_9 <-  ggplot() +
   scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
     labels = scales::date_format("%Y"),
     limits = as.Date(c("1980-01-01", "2025-01-01"))) + 
-  labs(title = "Partition 9 (9/3/2/4)", y = "ESA", x = NULL) + theme_classic() + 
+  labs(title = expression(ESA[partition] ~ "9" ~ "(n = 106)"), y = "ESA", x = NULL) + theme_bw() + 
   theme(legend.position = "none", axis.title = element_text(size = 10), 
-        plot.title = element_text(size = 12, hjust = 0.5), axis.text = element_text(size = 10)) 
+        plot.title = element_text(size = 10, hjust = 0.5), axis.text = element_text(size = 10)) 
+
+# ggplot(data = partition_1, aes(x = ESA)) + geom_histogram(aes(y = after_stat(density)), bins = 44)
+
+pdf_10 = ggplot(data = partition_10, aes(x = ESA)) + geom_histogram(aes(y = after_stat(count/sum(count))), bins = 40, 
+       # binwidth = \(x) 2 * IQR(x) / length (x)^(1/3), 
+         fill = "steelblue", color = "black") + 
+  labs(x = "ESA", y = "PDF", 
+       title = expression(atop("Partition 10",
+                               ESA[rstd]~group~4))) +
+         coord_cartesian(xlim = c(-1, 1)) + scale_y_continuous(expand = c(0, 0)) + theme_bw() +
+  theme(plot.title = element_text(size = 10, hjust = 0.5), axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+# aspect ratios 
+map_partition_plot_1 <- map_partition_plot_1 + theme(aspect.ratio = 0.7)
+plot_1 <- plot_1 + theme(aspect.ratio = 0.4)
+pdf_1 <- pdf_1 + theme(aspect.ratio = 0.5)
+
+# standardize plot margins
+base_theme <- theme(plot.margin = margin(5, 5, 5, 5))
+
+plot_1 <- plot_1 + base_theme
+pdf_1 <- pdf_1 + base_theme
+map_partition_plot_1 <- map_partition_plot_1 + base_theme
 
 
-plot_10 <- ggplot() + 
-  geom_line(data = partition_10, aes(x = DATE, y = ESA, group = SITENO), 
-            color = "darkgray", alpha = 0.25, linewidth = 0.3) +
-  geom_line(data = median_10, aes(x = DATE, y = median), color = "blue", linewidth = 1) +
-  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.8, color = "red") +
-  scale_y_continuous(limits = c(-1, 1), expand = c(0,0)) + 
-  scale_x_date(breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
-    labels = scales::date_format("%Y"),
-    limits = as.Date(c("1980-01-01", "2025-01-01"))) + 
-  labs(title = "Partition 10 (10/4/1/3)", y = "ESA", x = NULL) + theme_classic() + 
-  theme(legend.position = "none", axis.title = element_text(size = 10), 
-        plot.title = element_text(size = 12, hjust = 0.5), axis.text = element_text(size = 10))#+
- # theme(panel.border = element_rect(color = "black", fill = NA, linewidth = 2))
+# one time series, one pdf
+left_column <- plot_1 / plot_spacer() + plot_layout(heights = c(2,2))
 
-tgroup_1 <- plot_1 / plot_10
+right_column <- pdf_1 / plot_spacer() / map_partition_plot_1 + plot_layout(heights = c(2, 2, 3))
 
-egroup_1 <- plot_2 / plot_3 / plot_4 / plot_5
+# two time series, two pdf
+left_column <- plot_8 / plot_9 + plot_layout(heights = c(2,2))
 
-egroup_2 <- plot_6 / plot_7
+right_column <- pdf_8 / pdf_9 / map_partition_plot_1 + plot_layout(heights = c(2, 2, 3))
 
-egroup_3 <- plot_8 / plot_9
+# overall layout of 2 columns and panel labeling 
+combined <- wrap_plots(left_column, right_column, ncol = 2, widths = c(2, 1)) +
+ plot_annotation(tag_levels = 'a', tag_prefix = "", tag_suffix = ") ")
+ 
 
-ggplot(data = median_ESA, aes(x = Time_Index, y = median)) + geom_line() +
-  ylim(-1, 1.1) + geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  theme_minimal() + facet_wrap(~Partitions)
+row_heights <- c(2,2)
+# one partition
+left_column <- plot_1 / pdf_1 + plot_layout(heights = row_heights)
+
+map_col <- map_partition_plot_1
+
+combined <- wrap_plots(left_column, map_col, ncol = 2, widths = c(2, 1)) + 
+  plot_annotation(tag_levels = "a", tag_suffix = ")")
+
+# two partitions
+layout <- "
+ABM
+CDM
+"
+
+combined <- wrap_plots(
+  A = plot_2,  B = plot_3,
+  C = pdf_2,   D = pdf_3,
+  M = map_partition_plot_2_3,
+  design = layout,
+  widths = c(2, 2, 1),
+  heights = row_heights
+) +
+  plot_annotation(tag_levels = "a", tag_suffix = ") ")
 
 
+
+plot <- plot_1 + plot_2 + plot_3 + plot_4 + plot_5 + plot_6 + plot_7 + plot_8 + plot_9 + plot_10 +
+  plot_layout(ncol = 2, axes = "collect") +  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ") ") &
+  theme(plot.tag = element_text(size = 10))
+
+ggsave(filename = "F:/ESA/time_series.png", 
+       plot = plot, device = "png", width = 10, height = 8, dpi = 300)
+
+
+pdf_combined <- pdf_2 + pdf_3 + pdf_4 + pdf_5 + pdf_6 + pdf_7 + pdf_8 + pdf_9 + pdf_10 + pdf_1 +
+  plot_layout(ncol = 4) +  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ") ") &
+  theme(plot.tag = element_text(size = 10))
+
+ggsave(filename = "F:/ESA/pdf_plots.png", 
+       plot = pdf_combined, device = "png", width = 10, height = 8, dpi = 300)
 ######################################################
 ### DERIVATIVE PLOTS ###
 ######################################################
@@ -521,3 +706,55 @@ plot <- ggplot(deriv_switch_data, aes(x = Date)) +
         axis.title = element_text(size = 6),
         strip.text = element_text(size = 6),
         axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+######################################################
+### ESA plots ###
+######################################################
+# overall median value among each partition 
+median_esa <- esa_data %>% group_by(Partitions, DATE) %>% 
+  summarise(median = median(ESA))
+
+median_partition <- esa_data %>% group_by(Partitions) %>% 
+  summarise(median = median(ESA))
+
+
+# determine median absolute deviation of ESA, robust standard deviation  
+rstd_partition <- esa_data %>% group_by(Partitions) %>% 
+  summarise(rstd = mad(ESA, center = median(ESA), constant = 1)/0.6745)
+
+
+# derivative 
+# use 88 median ESA values 
+deriv13 <- function(f, dx) {
+  n <- length(f)
+  dfdx <- numeric(n)
+  
+  # Forward difference at start
+  dfdx[1] <- (-3 * f[1] + 4 * f[2] - f[3])
+  
+  # Centered difference for interior points
+  for (i in 2:(n-1)) {
+    dfdx[i] <- (-f[i-1] + f[i+1])
+  }
+  
+  # Backward difference at end
+  dfdx[n] <- (f[n-2] - 4 * f[n-1] + 3 * f[n])
+  
+  # Scale by 2*dx
+  dfdx <- dfdx / (2 * dx)
+  
+  return(dfdx)
+}
+
+
+# calculate derivative 
+esa_desa <- median_esa %>% group_by(Partitions) %>% 
+  mutate(dESA = deriv13(median, dx = 0.5))
+
+dESA_partitions <- esa_desa %>% group_by(Partitions) %>% 
+   summarise(desa_rstd = mad(dESA, center = median(dESA), constant = 1)/0.6745)
+
+pct_tails_dESA <- esa_desa %>% group_by(Partitions) %>% 
+  summarise(tails = mean(dESA < quantile(dESA, 0.25) - 1.5*IQR(dESA) |
+                         dESA > quantile(dESA, 0.75) + 1.5*IQR(dESA)) *100)
