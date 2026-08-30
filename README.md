@@ -1,6 +1,6 @@
 ## Overview 
 
-This repository contains the MATLAB and R code used to preprocess hydroclimatic time series, apply temporal filtering, compute the **Evaporation State Angle (ESA)**, and generate the analyses and figures presented in the associated manuscript.
+This repository contains the R code and Matlab code used to preprocess hydroclimatic time series, apply temporal filtering, compute the **Evaporation State Angle (ESA)**, and generate the analyses and figures presented in the associated manuscript.
 
 **ESA** represents hydroclimatic state in a two-dimensional energy-water space defined by:
 
