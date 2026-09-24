@@ -160,13 +160,13 @@ clustanalkm <- function(ESA_df, npar, num_init = 1000, seed = 1) {
   )
 }
 
-##############################
+##########################################
 # load ESA data (747 watersheds, 88 ESA observations per watershed)
 # output from ESA_calculation.R 
 # ESA is theoretically bounded but can slightly exceed 1.0 due to overestimated AET
 # limit ESA to range of -1 to +1
 
-esa_data <- read_csv(here("esa_data.csv"))
+esa_data <- read_csv(here("results", "esa_data.csv"))
 esa_data$ESA <-  ifelse(esa_data$ESA > 1.0, 1.0, esa_data$ESA)
 
 esa_df <- esa_data %>% select(SITENO, DATE, ESA) 
@@ -270,9 +270,9 @@ num_init_diagnostic <- lapply(num_init_vals, function(n) {
   data.frame(
     num_init = n,
     best_WCSS = min(wcss),
-    sd_WCSS   = sd(wcss),
-    mean_ARI  = mean(ari_vals),
-    min_ARI   = min(ari_vals)
+    sd_WCSS = sd(wcss),
+    mean_ARI = mean(ari_vals),
+    min_ARI = min(ari_vals)
   )
 })
 num_init_diagnostic <- do.call(rbind, num_init_diagnostic)
@@ -333,7 +333,6 @@ kmeans_results <- data.frame(
   RMSE = final_geom$rmse[final_partition]
 )
  
-
 # for each contested site, find its two most-voted partitions across the 200 runs
 # anything without unanimous agreement across all n_votes
 contested_pairs <- kmeans_results %>%
@@ -341,7 +340,7 @@ contested_pairs <- kmeans_results %>%
   rowwise() %>%
   mutate(
     vote_counts = list(sort(table(vote_matrix[SITENO, ]), decreasing = TRUE)),
-    top_partition    = as.integer(names(vote_counts)[1]),
+    top_partition = as.integer(names(vote_counts)[1]),
     second_partition = as.integer(names(vote_counts)[2])
   ) %>%
   ungroup() %>%
@@ -383,6 +382,9 @@ write.csv(partition_attributes, here("partition_attributes.csv"), row.names = FA
 # kmeans results with coordinates and partitions
 kmeans_r_results <- kmeans_results %>% 
   left_join(site_info %>% dplyr::select(SITENO, dec_lat_va, dec_long_va), by = "SITENO")
+
+# format siteno column as character with leading zero if needed
+kmeans_r_results <- kmeans_r_results %>% mutate(SITENO = sprintf("%08d", SITENO))
 
 write.csv(kmeans_r_results, here("kmeans_r_results.csv"), row.names = FALSE)
 
@@ -461,6 +463,8 @@ fndout_R <- function(y){
 
 ###############################################################
 # summary statistics by partition 
+# used to create TABLE 1
+
 partition_stats <- partition_data %>%
   group_by(Partition) %>%
   group_modify(~{
@@ -504,28 +508,28 @@ partition_stats <- partition_data %>%
       n_ESA  = n_esa,
       n_dESA = n_desa,
 
-      ESA_median   = median(esa, na.rm = TRUE),
-      ESA_rstd     = mad(esa, na.rm = TRUE),
-      ESA_min      = ESA_min,
-      ESA_max      = ESA_max,
-      ESA_range    = ESA_max - ESA_min,
+      ESA_median = median(esa, na.rm = TRUE),
+      ESA_rstd = mad(esa, na.rm = TRUE),
+      ESA_min = ESA_min,
+      ESA_max = ESA_max,
+      ESA_range = ESA_max - ESA_min,
       ESA_midrange = (ESA_min + ESA_max) / 2,
-      ESA_low_fence     = ESA_low_fence,
-      ESA_high_fence    = ESA_high_fence,
-      ESA_low_out_pct   = ESA_low_out_pct,
-      ESA_high_out_pct  = ESA_high_out_pct,
-      ESA_oma           = ESA_oma,     # mean Abs ESA outlier
+      ESA_low_fence = ESA_low_fence,
+      ESA_high_fence = ESA_high_fence,
+      ESA_low_out_pct = ESA_low_out_pct,
+      ESA_high_out_pct = ESA_high_out_pct,
+      ESA_oma = ESA_oma,     # mean Abs ESA outlier
 
       dESA_median = 10 * median(desa, na.rm = TRUE),
-      dESA_rstd   = mad(desa, na.rm = TRUE),
-      dESA_min    = dESA_min,
-      dESA_max    = dESA_max,
-      dESA_range  = dESA_max - dESA_min,
-      dESA_low_fence    = dESA_low_fence,
-      dESA_high_fence   = dESA_high_fence,
-      dESA_low_out_pct  = dESA_low_out_pct,
+      dESA_rstd = mad(desa, na.rm = TRUE),
+      dESA_min = dESA_min,
+      dESA_max = dESA_max,
+      dESA_range = dESA_max - dESA_min,
+      dESA_low_fence = dESA_low_fence,
+      dESA_high_fence = dESA_high_fence,
+      dESA_low_out_pct = dESA_low_out_pct,
       dESA_high_out_pct = dESA_high_out_pct,
-      dESA_oma          = dESA_oma     # mean Abs dESA/dt outlier
+      dESA_oma  = dESA_oma     # mean Abs dESA/dt outlier
     )
   })
 
@@ -542,7 +546,6 @@ summary_attribute <- partition_attributes %>%
             min_elev = min(elev_mean), 
             max_elev = max(elev_mean), 
             mean_elev = mean(elev_mean))
-
 
 ##############################################################
 # IQR of ESA values within each partition across all basins and time points
@@ -632,6 +635,77 @@ combined_plot <- wrap_plots(partition_plots, ncol = 2) +
 ggsave(filename = here("Figures/ESA_partition_timeseries.png"),
        plot = combined_plot, device = "png", width = 10, height = 8, dpi = 300)
 
+###########################################
+### dESA TIME SERIES PARTITION PLOTS ###
+###########################################
+# paneled time series figure for derivatives 
+
+# median dESA of each partition using all member watersheds, 88 time steps
+median_desa <- partition_data %>%
+  group_by(Partition, DATE) %>%
+  summarise(median_desa = median(dESA, na.rm = TRUE), .groups = "drop")
+
+# for shared axes, use same code from ESA time series plot above (make_partition_plot), modify names
+
+# creates individual plots per partition, allowing y-axes values to depend on partition limits of dESA
+make_varied_plot <- function(p) {
+    partition_p <- partition_data %>% filter(Partition == p)
+    median_p <- median_desa %>% filter(Partition == p)
+    n_p <- n_df$n[n_df$Partition == p]
+  
+  # determine y-axis range for this partition
+ # y_range <- range(partition_p$dESA, na.rm = TRUE)
+  
+  # round outward to the nearest integer
+ # y_min <- floor(y_range[1])
+ # y_max <- ceiling(y_range[2])
+  
+  # whole number breaks
+ # y_breaks <- seq(y_min, y_max, by = 1)
+  
+  ggplot() +
+    geom_line(data = partition_p, aes(x = DATE, y = dESA, group = SITENO),
+              color = "darkgray", alpha = 0.25, linewidth = 0.3) +
+    geom_line(data = median_p, aes(x = DATE, y = median_desa),
+              color = "blue", linewidth = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.8, color = "red") +
+  #  scale_y_continuous(
+   #   limits = c(y_min, y_max), breaks = y_breaks, expand = c(0, 0)) + 
+    scale_y_continuous(limits = c(-3, 3), expand = c(0, 0)) +
+    scale_x_date(
+      breaks = seq(as.Date("1980-01-01"), as.Date("2025-01-01"), by = "5 years"),
+      labels = scales::date_format("%Y"),
+      limits = as.Date(c("1980-01-01", "2025-01-01"))) +
+    labs(
+      title = bquote(
+        Partition ~ .(p) ~ .(paste0("(n = ", n_p, ")"))
+      ),
+      y = bquote("dESA/dt "(year^-1)), x = NULL) +
+    theme_bw() +
+    theme(
+      legend.position = "none",
+      axis.title = element_text(size = 10),
+      plot.title = element_text(size = 10, hjust = 0.5),
+      axis.text = element_text(size = 10)
+    )
+}
+
+# create 10 individual plots, in partition order, into one list
+partition_plots <- lapply(1:10, make_varied_plot)
+
+# combine into one 2-column figure with shared axes tags (a)
+combined_plot <- wrap_plots(partition_plots, ncol = 2) +
+ # plot_layout(axes = "keep", axis_titles = "keep") +
+  plot_layout(axes = "collect") +
+  plot_annotation(tag_levels = "a", tag_prefix = "(", tag_suffix = ") ") &
+  theme(plot.tag = element_text(size = 10), 
+        axis.text.y = element_text(size = 10), 
+        axis.ticks.y = element_line(), 
+        axis.line.y = element_line())
+ 
+ggsave(filename = here("Figures/dESA_partition_timeseries.png"),
+       plot = combined_plot, device = "png", width = 10, height = 8, dpi = 300)
+
 ######################################################
 ### SPATIAL COHERENCE WITHIN PARTITIONS ###
 ######################################################
@@ -678,8 +752,7 @@ contiguity_by_partition <- kmeans_r_results %>%
     tibble(
       mean_pairwise_km = mean(dist_vals),
       median_pairwise_km = median(dist_vals),
-      n_basins = nrow(.x)
-    )
+      n_basins = nrow(.x))
   }) %>%
   ungroup() %>%
   arrange(Partition)

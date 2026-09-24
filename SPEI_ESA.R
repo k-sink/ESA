@@ -42,10 +42,10 @@ df_monthly <- df_monthly %>% mutate(BAL = PRCP - PET, DATE = as.Date(paste(YR, M
 record_check <- df_monthly %>%
   group_by(SITENO) %>%
   summarise(
-    n_months   = n(),
+    n_months = n(),
     start_date = min(DATE),
-    end_date   = max(DATE),
-    .groups    = "drop"
+    end_date = max(DATE),
+    .groups = "drop"
   )
 
 print(summary(record_check$n_months))
@@ -62,27 +62,23 @@ print(summary(record_check$n_months))
 
 calc_spei <- function(df_site) {
 
-  start_year  <- min(df_site$YR)
+  start_year <- min(df_site$YR)
   start_month <- min(df_site$MNTH[df_site$YR == start_year])
-  n_months    <- nrow(df_site)
+  n_months <- nrow(df_site)
 
   # create time series objects
-  prcp_ts    <- ts(df_site$PRCP,
-                   start     = c(start_year, start_month),
-                   frequency = 12)
-  balance_ts <- ts(df_site$BAL,
-                   start     = c(start_year, start_month),
-                   frequency = 12)
+  prcp_ts <- ts(df_site$PRCP, start = c(start_year, start_month), frequency = 12)
+  balance_ts <- ts(df_site$BAL, start = c(start_year, start_month), frequency = 12)
   spei_12 <- tryCatch(
     as.numeric(spei(balance_ts, scale = 12, na.rm = TRUE)$fitted),
     error = function(e) rep(NA_real_, n_months)
   )
   tibble(
-    DATE    = df_site$DATE,
-    YR    = df_site$YR,
-    MNTH   = df_site$MNTH,
-    PRCP    = df_site$PRCP,
-    PET     = df_site$PET,
+    DATE = df_site$DATE,
+    YR = df_site$YR,
+    MNTH = df_site$MNTH,
+    PRCP = df_site$PRCP,
+    PET = df_site$PET,
     BALANCE = df_site$BAL,
     SPEI_12 = spei_12
   )
@@ -125,8 +121,8 @@ esa_indices <- esa_data %>%
 # check join 
 join_check <- esa_indices %>%
   summarise(
-    n_total    = n(),
-    n_spei_na  = sum(is.na(SPEI_12))
+    n_total = n(),
+    n_spei_na = sum(is.na(SPEI_12))
   )
 
 # remove initial NA values 
@@ -202,7 +198,6 @@ cor_watershed <- site_cor_12 %>%
     # 95% confidence interval for mean Fisher z
     z_lower = mean_z - qt(0.975, df = df) * sd_z / sqrt(n_watersheds), 
     z_upper = mean_z + qt(0.975, df = df) * sd_z / sqrt(n_watersheds),
-    
     .groups = "drop") %>% 
   
   # transform confidence limits to correlation scale 
@@ -244,8 +239,7 @@ lag_cor_results <- map_dfr(lag_months, function(lag) {
     group_by(SITENO) %>%
     arrange(DATE) %>%
     mutate(
-      SPEI_12_lagged = lag(SPEI_12, n = abs(lag),
-                           default = NA) *
+      SPEI_12_lagged = lag(SPEI_12, n = abs(lag), default = NA) *
                        ifelse(lag >= 0, 1, 1),
       SPEI_12_lagged = if (lag < 0) {
         lead(SPEI_12, n = abs(lag), default = NA)
@@ -259,9 +253,8 @@ lag_cor_results <- map_dfr(lag_months, function(lag) {
     group_by(Partition) %>%
     summarise(
       lag_months = lag,
-      r_SPEI_12  = cor(ESA, SPEI_12_lagged,
-                       use = "complete.obs"),
-      .groups    = "drop"
+      r_SPEI_12  = cor(ESA, SPEI_12_lagged, use = "complete.obs"),
+      .groups = "drop"
     )
 })
 
@@ -279,8 +272,8 @@ best_lag <- lag_cor_results %>%
 cor_long <- site_cor_12 %>%
   select(Partition, r_SPEI_12) %>%
   pivot_longer(
-    cols      = starts_with("r_"),
-    names_to  = "Index",
+    cols = starts_with("r_"),
+    names_to = "Index",
     values_to = "r") %>%
   mutate(
     Index = recode(Index,
@@ -300,15 +293,14 @@ indices_cor_plot <- ggplot(cor_long,
     labels = seq(-0.8, 0, 0.2)) +
   labs(
   #  title = "Pearson Correlation between ESA and SPEI by Partition",
-    x     = "ESA Partition",
-    y     = "Pearson r",
-    fill  = "Index"
-  ) +
+    x = "ESA Partition",
+    y = "Pearson r",
+    fill  = "Index") +
   theme_minimal(base_size = 11) +
   theme(
     legend.position  = "bottom",
     panel.grid.minor = element_blank(),
-    plot.title       = element_text(size = 10, face = "bold")
+    plot.title = element_text(size = 10, face = "bold")
   )
 
 ggsave(filename = "F:/ESA/indices_cor_plot.png", 
@@ -323,10 +315,10 @@ ts_plot_data <- esa_spi12_spei12 %>%
   filter(Partitions %in% rep_partitions) %>%
   group_by(Partitions, DATE) %>%
   summarise(
-    median_ESA    = median(ESA,     na.rm = TRUE),
-    mean_SPEI_12  = mean(SPEI_12,   na.rm = TRUE),
-    mean_SPI_12   = mean(SPI_12,    na.rm = TRUE),
-    .groups       = "drop") %>%
+    median_ESA = median(ESA, na.rm = TRUE),
+    mean_SPEI_12 = mean(SPEI_12, na.rm = TRUE),
+    mean_SPI_12 = mean(SPI_12, na.rm = TRUE),
+    .groups = "drop") %>%
   mutate(Partition_label = paste("Partition", Partitions))
 
 # scale SPEI-12 to ESA range for dual axis
@@ -348,8 +340,8 @@ make_ts_panel <- function(partition_num, data, scale_factor,
               linewidth = 0.5) +
     geom_hline(yintercept = 0,
                linetype   = "dotted",
-               color      = "red",
-               linewidth  = 0.8) +
+               color = "red",
+               linewidth = 0.8) +
     annotate("rect",
              xmin = as.Date("1988-01-01"),
              xmax = as.Date("1990-12-31"),
@@ -361,38 +353,32 @@ make_ts_panel <- function(partition_num, data, scale_factor,
              ymin = -Inf, ymax = Inf,
              alpha = 0.08, fill = "orange") +
     scale_y_continuous(
-      name     = "Median ESA",
-      limits   = c(-1.2, 1.2),
-      breaks   = seq(-1, 1, 0.5),
+      name = "Median ESA",
+      limits = c(-1.2, 1.2),
+      breaks = seq(-1, 1, 0.5),
       sec.axis = sec_axis(
         transform = ~ . / scale_factor,
-        name      = "Mean SPEI-12",
-        breaks    = seq(-3, 3, 1)
-      )
-    ) +
+        name = "Mean SPEI-12",
+        breaks = seq(-3, 3, 1))) +
     scale_color_manual(
       values = c("ESA"     = "#593196",
-                 "SPEI-12" = "#d6604d")
-    ) +
+                 "SPEI-12" = "#d6604d")) +
     scale_x_date(
       date_breaks = "5 years",
-      date_labels = "%Y"
-    ) +
+      date_labels = "%Y") +
     labs(
       title = paste("Partition", partition_num),
-      x     = NULL,
-      color = NULL
-    ) +
+      x = NULL,
+      color = NULL) +
     theme_minimal() +
     theme(
       legend.position  = if (show_legend) "bottom" else "none",
-      axis.title       = element_text(size = 10),
-      axis.text        = element_text(size = 10),
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 10),
       panel.grid.minor = element_blank(),
-      plot.title       = element_text(size = 10, hjust = 0.5)
-    )
+      plot.title = element_text(size = 10, hjust = 0.5))
 
-  p
+    p
 }
 
 # build all 3 panels
