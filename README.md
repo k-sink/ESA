@@ -14,5 +14,6 @@ $$
 
 The normalized state vector is converted to an angular coordinate, which is then scaled to obtain the dimensionless ESA index. Full methodological details are provided in the accompanying manuscript.
 
-## License
 ## Contact
+Katharine Sink: katharine.sink@utdallas.edu
+John Ferguson: ferguson@utdallas.edu
